@@ -21,6 +21,9 @@ Delete: When a preset is selected from the drop-down menu, it will delete it. Th
 
 **Apply: Applies the settings/config to the Replacer SWEP. ANY changes you make, including switching saved profiles, will not take effect until you click "Apply"! The background of the Apply button will even turn red when you have made changes that haven't been applied! This way, you can click the X button to close the menu, look through the Q menu for npc classes, models, and weapons to get information for these fields that way, or do other things in game without being forced to use a config for the replacement NPCs that isn't complete. So again, YOU NEED TO CLICK APPLY FOR ANY CHANGES, INCLUDING PROFILE SWAPS, TO TAKE EFFECT!**
 
+_Note on Weapons:_
+
+If the replacement's NPC's class normally spawns with weapons from the Q menu, it will spawn with those if you don't specify a spawn weapon. This should also work with custom NPCs that have their own npc class and custom spawn weapons, so for them you likely won't need to manually put their custom weapons in the weapon field (and probably not a model in the model field) if they normally spawn with them. Note that it's based of the NPC class. So for example, NPCs based off npc_combine_s will spawn with combine weapons, but since the npc_citizen class does not spawn with weapons, you will need to specify weapons for NPCs based of this class, and likely specify a model too. To get friendly medics and rebels, which are based on npc_citizen, you need to specify a weapon and model. Good thing you can make presets!
 
 This was originally going to just be a quick script I had AI make, but I ended up spending more time playtesting it and asking for more features than I thought I would, so I figured others might be interested in it too.
 
