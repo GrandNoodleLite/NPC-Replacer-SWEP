@@ -30,6 +30,8 @@ if SERVER then
         -- Preserve "none" as a valid weapon value; only clear empty strings
         if cfg.weapon == "" then cfg.weapon = nil end
         if cfg.health == "" or cfg.health == "0" then cfg.health = nil end
+        -- Dissolve type: default to "1" (Heavy) if empty or missing
+        if cfg.dissolve == "" then cfg.dissolve = nil end
         ply.npc_replacer_current = cfg
         ply:SetPData("npc_replacer_current", util.TableToJSON(ply.npc_replacer_current))
     end)
@@ -40,6 +42,7 @@ if SERVER then
         if cfg.model == "" then cfg.model = nil end
         if cfg.weapon == "" then cfg.weapon = nil end
         if cfg.health == "" or cfg.health == "0" then cfg.health = nil end
+        if cfg.dissolve == "" then cfg.dissolve = nil end
         ply.npc_replacer_saves[name] = cfg
         ply:SetPData("npc_replacer_saves", util.TableToJSON(ply.npc_replacer_saves))
     end)
@@ -113,6 +116,27 @@ if CLIENT then
     end)
 
     -- =====================================================================
+    -- Dissolve-type definitions
+    -- =====================================================================
+    -- value = Source Engine dissolve type passed to Entity:Dissolve()
+    -- "-1" is a special value meaning "no dissolve effect, just remove"
+    local DISSOLVE_OPTIONS = {
+        { label = "Heavy",  value = "1" },
+        { label = "Energy", value = "0" },
+        { label = "Light",  value = "2" },
+        { label = "Core",   value = "3" },
+        { label = "None",   value = "-1" },
+    }
+
+    local DISSOLVE_DEFAULT = "1"  -- Heavy
+
+    -- Build quick lookup: value -> label
+    local DISSOLVE_LABEL_FOR = {}
+    for _, opt in ipairs(DISSOLVE_OPTIONS) do
+        DISSOLVE_LABEL_FOR[opt.value] = opt.label
+    end
+
+    -- =====================================================================
     -- Forward declarations
     -- =====================================================================
     local copyState     = nil
@@ -157,20 +181,22 @@ if CLIENT then
         -- Initialise lastApplied from server data on first open
         if not lastApplied then
             lastApplied = {
-                class  = (data.current or {}).class  or "",
-                model  = (data.current or {}).model  or "",
-                weapon = (data.current or {}).weapon or "",
-                health = (data.current or {}).health or "",
+                class    = (data.current or {}).class    or "",
+                model    = (data.current or {}).model    or "",
+                weapon   = (data.current or {}).weapon   or "",
+                health   = (data.current or {}).health   or "",
+                dissolve = (data.current or {}).dissolve or DISSOLVE_DEFAULT,
             }
         end
 
         -- Use pending (unsaved) field values if the user closed with X last time,
         -- otherwise fall back to what the server sent
         local current = pendingValues or {
-            class  = (data.current or {}).class  or "",
-            model  = (data.current or {}).model  or "",
-            weapon = (data.current or {}).weapon or "",
-            health = (data.current or {}).health or "",
+            class    = (data.current or {}).class    or "",
+            model    = (data.current or {}).model    or "",
+            weapon   = (data.current or {}).weapon   or "",
+            health   = (data.current or {}).health   or "",
+            dissolve = (data.current or {}).dissolve or DISSOLVE_DEFAULT,
         }
         pendingValues = nil  -- consumed; will be re-set if they close with X again
 
@@ -189,12 +215,14 @@ if CLIENT then
         local frameW = pad + labelW + entryW + btnGap + copyBtnW + pad
 
         -- Vertical layout computation
-        local contentTop  = S(30)
-        local numRows     = 4   -- class, model, weapon, health
-        local fieldBlockH = numRows * rowH + (numRows - 1) * rowGap
-        local comboY      = contentTop + fieldBlockH + rowGap + S(2)
-        local btnRowY     = comboY + comboH + rowGap + S(2)
-        local frameH      = btnRowY + btnH + pad
+        local contentTop     = S(30)
+        local numTextRows    = 4   -- class, model, weapon, health
+        local textBlockH     = numTextRows * rowH + (numTextRows - 1) * rowGap
+        local dissolveY      = contentTop + textBlockH + rowGap
+        local dissolveRowH   = rowH
+        local savesComboY    = dissolveY + dissolveRowH + rowGap + S(2)
+        local btnRowY        = savesComboY + comboH + rowGap + S(2)
+        local frameH         = btnRowY + btnH + pad
 
         local frame = vgui.Create("DFrame")
         menuFrame = frame
@@ -302,9 +330,37 @@ if CLIENT then
 
         healthEntry:SetNumeric(true)
 
+        -- ---- Dissolve effect dropdown ----
+        local dissolveLbl = vgui.Create("DLabel", frame)
+        dissolveLbl:SetPos(pad, dissolveY)
+        dissolveLbl:SetSize(labelW, dissolveRowH)
+        dissolveLbl:SetText("Dissolve Effect:")
+
+        -- Hint bubble for dissolve
+        surface.SetFont("DermaDefault")
+        local dissolveLblW = surface.GetTextSize("Dissolve Effect:")
+        MakeHintBubble(frame, pad + dissolveLblW + S(2), dissolveY + S(3),
+            "Visual effect when removing an NPC (applies to both replace and dissolve-only)")
+
+        local dissolveCombo = vgui.Create("DComboBox", frame)
+        dissolveCombo:SetPos(pad + labelW, dissolveY + S(2))
+        dissolveCombo:SetSize(entryW + btnGap + copyBtnW, dissolveRowH - S(4))
+        dissolveCombo:SetSortItems(false)  -- preserve our defined order
+
+        local dissolveChooseIdx = 1  -- fallback to first option (Heavy)
+        for i, opt in ipairs(DISSOLVE_OPTIONS) do
+            dissolveCombo:AddChoice(opt.label, opt.value)
+            if opt.value == current.dissolve then
+                dissolveChooseIdx = i
+            end
+        end
+
+        -- Use ChooseOptionID to properly select the option (not just display text)
+        dissolveCombo:ChooseOptionID(dissolveChooseIdx)
+
         -- ---- Saved-config combo box ----
         local savesBox = vgui.Create("DComboBox", frame)
-        savesBox:SetPos(pad, comboY)
+        savesBox:SetPos(pad, savesComboY)
         savesBox:SetSize(frameW - pad * 2, comboH)
         savesBox:SetValue("Select Saved Config")
         for name in pairs(data.saves or {}) do
@@ -318,16 +374,29 @@ if CLIENT then
                 modelEntry:SetValue(sav.model or "")
                 weaponEntry:SetValue(sav.weapon or "")
                 healthEntry:SetValue(sav.health or "")
+                -- Load saved dissolve type, default to Heavy if not present
+                local savDissolve = sav.dissolve or DISSOLVE_DEFAULT
+                for i, opt in ipairs(DISSOLVE_OPTIONS) do
+                    if opt.value == savDissolve then
+                        dissolveCombo:ChooseOptionID(i)
+                        break
+                    end
+                end
             end
         end
 
         -- ---- Value collector ----
         local function GetValues()
+            -- Read selected dissolve value from combo box
+            local _, dissolveVal = dissolveCombo:GetSelected()
+            if not dissolveVal then dissolveVal = DISSOLVE_DEFAULT end
+
             return {
-                class  = classEntry:GetValue(),
-                model  = modelEntry:GetValue(),
-                weapon = weaponEntry:GetValue(),
-                health = healthEntry:GetValue()
+                class    = classEntry:GetValue(),
+                model    = modelEntry:GetValue(),
+                weapon   = weaponEntry:GetValue(),
+                health   = healthEntry:GetValue(),
+                dissolve = tostring(dissolveVal),
             }
         end
 
@@ -427,6 +496,7 @@ if CLIENT then
             modelEntry:SetValue("")
             weaponEntry:SetValue("")
             healthEntry:SetValue("")
+            dissolveCombo:ChooseOptionID(1)  -- Reset to Heavy (first option)
             savesBox:SetValue("Select Saved Config")
         end
 
@@ -443,10 +513,11 @@ if CLIENT then
         -- ---- Highlight Apply button when unapplied changes exist ----
         local function HasUnappliedChanges()
             local v = GetValues()
-            return v.class  ~= (lastApplied.class  or "")
-                or v.model  ~= (lastApplied.model  or "")
-                or v.weapon ~= (lastApplied.weapon or "")
-                or v.health ~= (lastApplied.health or "")
+            return v.class    ~= (lastApplied.class    or "")
+                or v.model    ~= (lastApplied.model    or "")
+                or v.weapon   ~= (lastApplied.weapon   or "")
+                or v.health   ~= (lastApplied.health   or "")
+                or v.dissolve ~= (lastApplied.dissolve or DISSOLVE_DEFAULT)
         end
 
         local normalPaint    = applyBtn.Paint
@@ -590,6 +661,7 @@ if CLIENT then
                 if copyState.field == "model"  or copyState.field == "all" then newValues.model  = npcModel  end
                 if copyState.field == "weapon" or copyState.field == "all" then newValues.weapon = npcWeapon end
                 if copyState.field == "health" or copyState.field == "all" then newValues.health = npcHealth end
+                -- Note: dissolve effect is not copied from target NPCs (it's a SWEP preference, not an NPC property)
 
                 local dat = copyState.data
                 dat.current = newValues
@@ -627,9 +699,25 @@ if CLIENT then
 end
 
 -- =========================================================================
+-- Dissolve helper (server-side)
+-- =========================================================================
+-- Performs a dissolve effect on the given entity, or a plain Remove()
+-- when dissolveType is -1 ("None").
+-- Returns true if the entity was removed immediately (no dissolve anim).
+local function DissolveOrRemove(ent, dissolveType)
+    if dissolveType == -1 then
+        ent:Remove()
+        return true
+    else
+        ent:Dissolve(dissolveType)
+        return false
+    end
+end
+
+-- =========================================================================
 -- SWEP definition
 -- =========================================================================
-SWEP.Author       = "Grok 4/Claude Opus 4.6"
+SWEP.Author       = "Grok 4 and Claude Opus 4.6"
 SWEP.Category     = "GrandNoodleLite's Weapons"
 SWEP.PrintName    = "NPC Replacer"
 SWEP.Instructions = "Left Click: Replace targeted NPC. Right Click: Open configuration menu. Reload: Dissolve targeted NPC."
@@ -678,6 +766,13 @@ function SWEP:PrimaryAttack()
 
     local pos = ent:GetPos()
     local ang = ent:GetAngles()
+
+    -- Parse dissolve type from config (default: 1 = Heavy)
+    local dissolveType = 1
+    if cfg.dissolve and cfg.dissolve ~= "" then
+        local num = tonumber(cfg.dissolve)
+        if num then dissolveType = num end
+    end
 
     -- Parse spawn health from config (stored as string)
     local spawnHealth = nil
@@ -781,94 +876,91 @@ function SWEP:PrimaryAttack()
     local capturedSpecWeapon = specificWeapon
     local capturedOwner      = self.Owner
 
-    local hookID = "npc_replacer_remove_" .. ent:EntIndex()
-    hook.Add("EntityRemoved", hookID, function(removedEnt)
-        if removedEnt == ent then
-            hook.Remove("EntityRemoved", hookID)
+    -- Shared spawn logic used by both dissolve and instant-remove paths
+    local function SpawnReplacement()
+        local temp_npc = ents.Create(capturedCfg.class)
+        if capturedCfg.model then temp_npc:SetModel(capturedCfg.model) end
+        local mins, maxs = temp_npc:GetCollisionBounds()
+        temp_npc:Remove()
 
-            local temp_npc = ents.Create(capturedCfg.class)
-            if capturedCfg.model then temp_npc:SetModel(capturedCfg.model) end
-            local mins, maxs = temp_npc:GetCollisionBounds()
-            temp_npc:Remove()
+        local spawn_pos   = FindNearbyClearPos(pos, mins, maxs) or pos
+        local upright_ang = Angle(0, ang.y, 0)
 
-            local spawn_pos   = FindNearbyClearPos(pos, mins, maxs) or pos
-            local upright_ang = Angle(0, ang.y, 0)
+        local newnpc = ents.Create(capturedCfg.class)
+        newnpc:SetPos(spawn_pos)
+        newnpc:SetAngles(upright_ang)
 
-            local newnpc = ents.Create(capturedCfg.class)
-            newnpc:SetPos(spawn_pos)
-            newnpc:SetAngles(upright_ang)
-
-            -- Apply registered KeyValues from NPC spawn list before Spawn()
-            -- This mirrors sandbox spawn menu behaviour (citizentype, spawnflags, etc.)
-            if capturedKV then
-                for k, v in pairs(capturedKV) do
-                    if k ~= "additionalequipment" then
-                        newnpc:SetKeyValue(k, v)
-                    end
+        -- Apply registered KeyValues from NPC spawn list before Spawn()
+        if capturedKV then
+            for k, v in pairs(capturedKV) do
+                if k ~= "additionalequipment" then
+                    newnpc:SetKeyValue(k, v)
                 end
-            end
-
-            -- Weapon assignment via additionalequipment KeyValue (before Spawn)
-            -- This is how GMod's spawn menu equips NPCs — the engine processes
-            -- this KeyValue during Spawn() for proper weapon initialisation
-            if capturedNoWeapon then
-                -- Explicitly no weapon: skip all weapon assignment so NPC spawns unarmed
-            elseif capturedSpecWeapon then
-                newnpc:SetKeyValue("additionalequipment", capturedSpecWeapon)
-            elseif capturedDefWeapons then
-                local randomWeapon = capturedDefWeapons[math.random(#capturedDefWeapons)]
-                newnpc:SetKeyValue("additionalequipment", randomWeapon)
-            elseif capturedKV and capturedKV["additionalequipment"] then
-                newnpc:SetKeyValue("additionalequipment", capturedKV["additionalequipment"])
-            end
-
-            newnpc:Spawn()
-            newnpc:Activate()
-            if IsValid(capturedOwner) then
-                newnpc:SetCreator(capturedOwner)
-            end
-
-            -- Apply custom model AFTER Spawn()/Activate() so it overrides any
-            -- model that the engine sets during spawning (e.g. npc_citizen
-            -- citizentype logic would otherwise override our SetModel call)
-            if capturedCfg.model then
-                newnpc:SetModel(capturedCfg.model)
-            end
-
-            newnpc:DropToFloor()
-
-            -- Apply custom health (compatible with VJ-Base, ZBase, and vanilla NPCs)
-            if capturedHealth and IsValid(newnpc) then
-                -- Standard GMod method: SetMaxHealth first, then SetHealth
-                newnpc:SetMaxHealth(capturedHealth)
-                newnpc:SetHealth(capturedHealth)
-
-                -- VJ-Base compatibility: set StartHealth so VJ-Base internal
-                -- logic (regen, damage scaling, etc.) recognises the correct value
-                newnpc.StartHealth = capturedHealth
-
-                -- ZBase compatibility: call SetZBaseHealth if available
-                if newnpc.SetZBaseHealth then
-                    pcall(function() newnpc:SetZBaseHealth(capturedHealth) end)
-                end
-
-                -- Delayed re-application to override any NPC base that sets
-                -- health during its own deferred initialisation (VJ-Base uses
-                -- a ~0.15s timer, ZBase may also defer). We apply at 0.3s.
-                local delayedNPC = newnpc
-                local delayedHP  = capturedHealth
-                timer.Simple(0.3, function()
-                    if IsValid(delayedNPC) then
-                        delayedNPC:SetMaxHealth(delayedHP)
-                        delayedNPC:SetHealth(delayedHP)
-                        delayedNPC.StartHealth = delayedHP
-                    end
-                end)
             end
         end
-    end)
 
-    ent:Dissolve(1)  -- Heavy electrical dissolve
+        -- Weapon assignment via additionalequipment KeyValue (before Spawn)
+        if capturedNoWeapon then
+            -- Explicitly no weapon
+        elseif capturedSpecWeapon then
+            newnpc:SetKeyValue("additionalequipment", capturedSpecWeapon)
+        elseif capturedDefWeapons then
+            local randomWeapon = capturedDefWeapons[math.random(#capturedDefWeapons)]
+            newnpc:SetKeyValue("additionalequipment", randomWeapon)
+        elseif capturedKV and capturedKV["additionalequipment"] then
+            newnpc:SetKeyValue("additionalequipment", capturedKV["additionalequipment"])
+        end
+
+        newnpc:Spawn()
+        newnpc:Activate()
+        if IsValid(capturedOwner) then
+            newnpc:SetCreator(capturedOwner)
+        end
+
+        if capturedCfg.model then
+            newnpc:SetModel(capturedCfg.model)
+        end
+
+        newnpc:DropToFloor()
+
+        -- Apply custom health (compatible with VJ-Base, ZBase, and vanilla NPCs)
+        if capturedHealth and IsValid(newnpc) then
+            newnpc:SetMaxHealth(capturedHealth)
+            newnpc:SetHealth(capturedHealth)
+            newnpc.StartHealth = capturedHealth
+            if newnpc.SetZBaseHealth then
+                pcall(function() newnpc:SetZBaseHealth(capturedHealth) end)
+            end
+            local delayedNPC = newnpc
+            local delayedHP  = capturedHealth
+            timer.Simple(0.3, function()
+                if IsValid(delayedNPC) then
+                    delayedNPC:SetMaxHealth(delayedHP)
+                    delayedNPC:SetHealth(delayedHP)
+                    delayedNPC.StartHealth = delayedHP
+                end
+            end)
+        end
+    end
+
+    if dissolveType == -1 then
+        -- "None" dissolve: remove instantly then spawn replacement on next frame
+        -- Using a brief timer ensures the old entity is fully cleaned up
+        ent:Remove()
+        timer.Simple(0, function()
+            SpawnReplacement()
+        end)
+    else
+        -- Dissolve effect: hook into EntityRemoved to spawn after dissolve completes
+        local hookID = "npc_replacer_remove_" .. ent:EntIndex()
+        hook.Add("EntityRemoved", hookID, function(removedEnt)
+            if removedEnt == ent then
+                hook.Remove("EntityRemoved", hookID)
+                SpawnReplacement()
+            end
+        end)
+        ent:Dissolve(dissolveType)
+    end
 end
 
 function SWEP:SecondaryAttack()
@@ -888,5 +980,13 @@ function SWEP:Reload()
     local ent = tr.Entity
     if not IsValid(ent) or not ent:IsNPC() then return end
 
-    ent:Dissolve(1)  -- Heavy electrical dissolve
+    -- Read dissolve type from current config (default: 1 = Heavy)
+    local dissolveType = 1
+    local cfg = self.Owner.npc_replacer_current
+    if cfg and cfg.dissolve and cfg.dissolve ~= "" then
+        local num = tonumber(cfg.dissolve)
+        if num then dissolveType = num end
+    end
+
+    DissolveOrRemove(ent, dissolveType)
 end
