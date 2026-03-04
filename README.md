@@ -17,6 +17,8 @@ Save: Lets you save the current settings as a preset. You will be asked to name 
 
 Delete: When a preset is selected from the drop-down menu, it will delete it. The preset needs to be selected for it to be deleted!
 
+Dissolve Effect: This dropdown menu lets you change or remove the dissolve effect when an NPC is replaced or disintegrated. Saves to presets. Since it's a dropdown menu, you don't need to worry about typing out a setting/value.
+
 **And most importantly...**
 
 **Apply: Applies the settings/config to the Replacer SWEP. ANY changes you make, including switching saved profiles, will not take effect until you click "Apply"! The background of the Apply button will even turn red when you have made changes that haven't been applied! This way, you can click the X button to close the menu, look through the Q menu for npc classes, models, and weapons to get information for these fields that way, or do other things in game without being forced to use a config for the replacement NPCs that isn't complete. So again, YOU NEED TO CLICK APPLY FOR ANY CHANGES, INCLUDING PROFILE SWAPS, TO TAKE EFFECT!**
